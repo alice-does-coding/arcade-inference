@@ -120,6 +120,10 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 			slog.Error("HF 403", "msg", msg)
 			return "", &AuthError{Msg: msg}
 
+		case http.StatusPaymentRequired:
+			msg := readBody(resp.Body)
+			return "", &BillingError{Msg: "HuggingFace 402: " + truncate(msg, 200)}
+
 		case http.StatusBadRequest, 422:
 			msg := readBody(resp.Body)
 			return "", fmt.Errorf("HF %d bad request for %s: %s", resp.StatusCode, opts.Model, truncate(msg, 300))

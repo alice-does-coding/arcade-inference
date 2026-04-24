@@ -88,15 +88,15 @@ func (p *OpenRouterProvider) Chat(ctx context.Context, messages []Message, opts 
 			msg := readBody(resp.Body)
 			return "", &AuthError{Msg: msg}
 
+		case http.StatusPaymentRequired:
+			msg := readBody(resp.Body)
+			return "", &BillingError{Msg: "OpenRouter 402: " + truncate(msg, 200)}
+
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
-			if attempt < maxRetries-1 {
-				backoff := time.Duration(1<<attempt) * time.Second
-				slog.Warn("openrouter 429", "attempt", attempt+1, "backoff", backoff)
-				sleep(ctx, backoff)
-				continue
-			}
-			return "", &RateLimitError{Msg: fmt.Sprintf("exhausted after %d attempts", maxRetries)}
+			// Rate limit is a quota boundary, not a transient glitch — fail fast
+			// so the router falls through to the next provider immediately.
+			return "", &RateLimitError{Msg: "openrouter: rate limited — falling through"}
 
 		case 500, 502, 503, 504:
 			resp.Body.Close()

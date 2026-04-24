@@ -48,6 +48,15 @@ type RateLimitError struct {
 
 func (e *RateLimitError) Error() string { return fmt.Sprintf("LLM rate limit: %s", e.Msg) }
 
+// BillingError is returned on 402 Payment Required or when the response body
+// indicates credit/quota exhaustion. Callers should stop using this provider
+// until credits are replenished (or after a long cooldown).
+type BillingError struct {
+	Msg string
+}
+
+func (e *BillingError) Error() string { return fmt.Sprintf("LLM billing error: %s", e.Msg) }
+
 // IsAuthError reports whether err is an AuthError.
 func IsAuthError(err error) bool {
 	var e *AuthError
@@ -57,5 +66,11 @@ func IsAuthError(err error) bool {
 // IsRateLimitError reports whether err is a RateLimitError.
 func IsRateLimitError(err error) bool {
 	var e *RateLimitError
+	return errors.As(err, &e)
+}
+
+// IsBillingError reports whether err is a BillingError.
+func IsBillingError(err error) bool {
+	var e *BillingError
 	return errors.As(err, &e)
 }

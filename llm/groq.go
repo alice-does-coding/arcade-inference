@@ -93,13 +93,10 @@ func (p *GroqProvider) Chat(ctx context.Context, messages []Message, opts ChatOp
 
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
-			if attempt < maxRetries-1 {
-				backoff := time.Duration(1<<attempt) * time.Second
-				slog.Warn("groq 429", "attempt", attempt+1, "backoff", backoff)
-				sleep(ctx, backoff)
-				continue
-			}
-			return "", &RateLimitError{Msg: fmt.Sprintf("groq: exhausted after %d attempts", maxRetries)}
+			// Rate limit on a free-tier provider is a per-minute quota, not a
+			// transient glitch. Retrying wastes tick time — fail fast so the
+			// router can fall through to the next provider immediately.
+			return "", &RateLimitError{Msg: "groq: rate limited — falling through"}
 
 		case 500, 502, 503, 504:
 			resp.Body.Close()

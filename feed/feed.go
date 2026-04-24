@@ -41,52 +41,60 @@ type source struct {
 }
 
 // redditSubs is the curated list of subreddits.
-// Selected for positivity, creativity, and genuine interest — no doom, no drama.
+// Selected for text-rich posts that agents can engage with meaningfully.
+// Image-only subreddits (aww, EarthPorn, photography, oddlysatisfying) are
+// intentionally excluded — their titles are image captions with no text context,
+// which produces non-sequiturs when agents try to react.
 var redditSubs = []struct{ name, category string }{
+	// Text-rich discussion and ideas
 	{"UpliftingNews", "Uplifting"},
 	{"CasualConversation", "Conversation"},
 	{"todayilearned", "Trivia"},
-	{"interestingasfuck", "Curiosity"},
-	{"mildlyinteresting", "Curiosity"},
 	{"Showerthoughts", "Ideas"},
-	{"space", "Space"},
+	{"NoStupidQuestions", "Ideas"},
+	{"explainlikeimfive", "Ideas"},
 	{"Futurology", "Future"},
+	{"philosophy", "Ideas"},
+
+	// Science and technology
+	{"space", "Space"},
 	{"nasa", "Space"},
 	{"physics", "Science"},
 	{"chemistry", "Science"},
 	{"mathematics", "Science"},
 	{"MachineLearning", "Technology"},
-	{"MadeMeSmile", "Wholesome"},
-	{"ContagiousLaughter", "Humor"},
-	{"wholesomememes", "Wholesome"},
-	{"Art", "Art"},
-	{"ImaginaryWorlds", "Art"},
-	{"photography", "Photography"},
-	{"analog", "Photography"},
-	{"WriteReadPublish", "Writing"},
+	{"singularity", "Technology"},
+	{"neuroscience", "Science"},
+	{"biology", "Science"},
+
+	// Creative and writing
 	{"worldbuilding", "Writing"},
+	{"WriteReadPublish", "Writing"},
+	{"scifi", "Books"},
+	{"Fantasy", "Books"},
+	{"booksuggestions", "Books"},
+	{"TrueFilm", "Film"},
+	{"WeAreTheMusicMakers", "Music"},
+
+	// Gaming (text discussions, not screenshots)
+	{"truegaming", "Gaming"},
+	{"patientgamers", "Gaming"},
+	{"indiegaming", "Gaming"},
+
+	// Growth and reflection
 	{"GetMotivated", "Motivation"},
 	{"DecidingToBeBetter", "Growth"},
 	{"NonZeroDay", "Growth"},
 	{"LifeProTips", "Tips"},
-	{"truegaming", "Gaming"},
-	{"patientgamers", "Gaming"},
-	{"indiegaming", "Gaming"},
-	{"booksuggestions", "Books"},
-	{"Fantasy", "Books"},
-	{"scifi", "Books"},
-	{"movies", "Film"},
-	{"TrueFilm", "Film"},
-	{"Music", "Music"},
-	{"WeAreTheMusicMakers", "Music"},
-	{"food", "Food"},
+	{"Meditation", "Growth"},
+
+	// Food and making (recipe posts have real text)
 	{"Cooking", "Food"},
 	{"DIY", "Making"},
-	{"crafts", "Making"},
-	{"aww", "Animals"},
-	{"EarthPorn", "Nature"},
-	{"NatureIsFuckingLit", "Nature"},
-	{"oddlysatisfying", "Satisfying"},
+
+	// Curiosity — these often have text context even for image posts
+	{"interestingasfuck", "Curiosity"},
+	{"mildlyinteresting", "Curiosity"},
 }
 
 var redditBlocklist = []string{
@@ -280,6 +288,8 @@ func fetchReddit(subreddit, category string) ([]Headline, error) {
 			Category struct {
 				Term string `xml:"term,attr"`
 			} `xml:"category"`
+			Content string `xml:"content"`
+			Summary string `xml:"summary"`
 		} `xml:"entry"`
 	}
 	if err := xml.Unmarshal(body, &feed); err != nil {
@@ -296,14 +306,38 @@ func fetchReddit(subreddit, category string) ([]Headline, error) {
 		if postURL == "" {
 			postURL = fmt.Sprintf("https://www.reddit.com/r/%s", subreddit)
 		}
+		raw := e.Summary
+		if raw == "" {
+			raw = e.Content
+		}
 		out = append(out, Headline{
 			Title:    title,
+			Summary:  extractTextSnippet(raw, 180),
 			Category: category,
 			Source:   "r/" + subreddit,
 			URL:      postURL,
 		})
 	}
 	return out, nil
+}
+
+var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
+var multiSpaceRe = regexp.MustCompile(`\s{2,}`)
+
+// extractTextSnippet strips HTML tags from s and returns up to maxLen characters.
+func extractTextSnippet(s string, maxLen int) string {
+	s = htmlTagRe.ReplaceAllString(s, " ")
+	s = multiSpaceRe.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	// Remove the Reddit boilerplate "submitted by /u/..." lines
+	if idx := strings.Index(s, "submitted by"); idx > 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	if len([]rune(s)) > maxLen {
+		r := []rune(s)
+		s = string(r[:maxLen]) + "…"
+	}
+	return s
 }
 
 // fetchHN pulls the current top stories from Hacker News via Firebase API.

@@ -25,7 +25,7 @@ func NewAnthropicProvider(apiKey string) *AnthropicProvider {
 	return &AnthropicProvider{
 		APIKey:       apiKey,
 		DefaultModel: "claude-sonnet-4-6",
-		client:       &http.Client{Timeout: 60 * time.Second},
+		client:       &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
@@ -135,6 +135,10 @@ func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message, opts C
 			msg := readBody(resp.Body)
 			return "", &AuthError{Msg: msg}
 
+		case http.StatusPaymentRequired:
+			msg := readBody(resp.Body)
+			return "", &BillingError{Msg: "Anthropic 402: " + truncate(msg, 200)}
+
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
 			if attempt < maxRetries-1 {
@@ -155,6 +159,11 @@ func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message, opts C
 
 		default:
 			msg := readBody(resp.Body)
+			// Anthropic returns 400 (not 402) when the credit balance is exhausted.
+			// Treat it as a BillingError so llm.Router falls through to the next provider.
+			if strings.Contains(msg, "credit balance is too low") || strings.Contains(msg, "Your credit balance") {
+				return "", &BillingError{Msg: "Anthropic 400: " + truncate(msg, 200)}
+			}
 			return "", fmt.Errorf("Anthropic %d: %s", resp.StatusCode, truncate(msg, 300))
 		}
 	}

@@ -143,6 +143,10 @@ func (p *MistralProvider) Chat(ctx context.Context, messages []Message, opts Cha
 			p.mu.Unlock()
 			return "", &AuthError{Msg: msg}
 
+		case http.StatusPaymentRequired:
+			msg := readBody(resp.Body)
+			return "", &BillingError{Msg: "Mistral 402: " + truncate(msg, 200)}
+
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
 			if attempt < maxRetries-1 {
