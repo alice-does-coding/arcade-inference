@@ -61,11 +61,16 @@ func NewHFProvider(apiKey string, rateLimit float64) *HFProvider {
 //
 // baseURL should point at the server root (without /v1/...) — e.g.
 // "http://garden-arcade-text.flycast:8080".
+//
+// Timeout is generous (5 min) because self-hosted CPU inference can queue
+// behind concurrent slots — the call is "slow but eventually succeeds." A
+// short timeout here means the response arrives after we've disconnected
+// and gets thrown away.
 func NewSelfHostedProvider(baseURL string) *HFProvider {
 	return &HFProvider{
 		BaseChatURL: baseURL + "/v1/chat/completions",
 		RateLimit:   16, // self-hosted has no upstream rate limit; just throttle a bit
-		client:      &http.Client{Timeout: 120 * time.Second},
+		client:      &http.Client{Timeout: 300 * time.Second},
 	}
 }
 
