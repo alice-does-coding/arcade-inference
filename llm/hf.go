@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -90,26 +91,41 @@ func (p *HFProvider) chatURL() string {
 	return hfChatURL
 }
 
-// injectNoThink suppresses Qwen3's default thinking mode by ensuring the
-// /no_think directive appears in a system message. Qwen3-family models
-// recognise this as a soft switch and skip the <think>...</think> block,
-// which is critical for chat latency and often pure noise in tiny models.
+// injectNoThink suppresses Qwen3's default thinking mode by appending the
+// /no_think directive to the LAST user message. Per Qwen3 docs the directive
+// is most reliably recognised in user-message position. System-message
+// placement (what we tried first) was silently ignored — the model still
+// emitted <think>...</think> blocks.
 //
 // Only applied when calling a self-hosted endpoint (BaseChatURL set) — HF
 // router calls go to whichever model is selected and may not be Qwen.
 func injectNoThink(messages []Message) []Message {
 	out := make([]Message, len(messages))
 	copy(out, messages)
-	for i, m := range out {
-		if m.Role == "system" {
-			if !strings.Contains(m.Content, "/no_think") {
-				out[i].Content = "/no_think " + m.Content
+	// Find the last user message; append /no_think.
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role == "user" {
+			if !strings.Contains(out[i].Content, "/no_think") {
+				out[i].Content = out[i].Content + " /no_think"
 			}
 			return out
 		}
 	}
-	// No system message — add one.
-	return append([]Message{{Role: "system", Content: "/no_think"}}, out...)
+	// No user message in the request (unusual). Append a synthetic one — the
+	// model needs something to respond to anyway.
+	return append(out, Message{Role: "user", Content: "/no_think"})
+}
+
+// thinkBlockRe matches Qwen3-style <think>...</think> blocks (and any
+// stray opening/closing tags). Defensive strip — even if /no_think is
+// honoured, leftover tags from a misbehaving response should never reach
+// the caller as post content.
+var thinkBlockRe = regexp.MustCompile(`(?is)<think\b[^>]*>.*?</think>\s*|</?think\b[^>]*>`)
+
+// stripThinking removes <think>...</think> blocks from the response and
+// trims surrounding whitespace.
+func stripThinking(s string) string {
+	return strings.TrimSpace(thinkBlockRe.ReplaceAllString(s, ""))
 }
 
 // Reset clears the auth latch. Call at tick start.
@@ -334,5 +350,8 @@ func (p *HFProvider) decodeChat(body io.ReadCloser, model string) (string, error
 	if len(result.Choices) == 0 {
 		return "", fmt.Errorf("HF: no choices in response for %s", model)
 	}
-	return result.Choices[0].Message.Content, nil
+	// Strip <think>...</think> blocks unconditionally — defensive against
+	// Qwen3-style thinking output even when /no_think was supposed to suppress
+	// it. We never want raw thinking tokens reaching the post-content layer.
+	return stripThinking(result.Choices[0].Message.Content), nil
 }
