@@ -37,6 +37,7 @@ type HFProvider struct {
 	BaseChatURL  string  // OAI-compatible /v1/chat/completions endpoint; empty = HF router
 	DefaultModel string  // used when ChatOptions.Model is empty
 	RateLimit    float64 // requests per second; default 8
+	MaxAttempts  int     // 0 = use the default maxRetries const; set to 1 to disable retries
 
 	mu         sync.Mutex
 	rlNext     time.Time
@@ -66,10 +67,16 @@ func NewHFProvider(apiKey string, rateLimit float64) *HFProvider {
 // behind concurrent slots — the call is "slow but eventually succeeds." A
 // short timeout here means the response arrives after we've disconnected
 // and gets thrown away.
+//
+// MaxAttempts = 1: no retries. Self-hosted failure modes (timeout, OOM,
+// machine down) don't get better with retry — they pile more in-flight
+// requests on a struggling backend and flood logs with misleading
+// "attempt=N backoff=Ms" warnings. Either it works or it doesn't.
 func NewSelfHostedProvider(baseURL string) *HFProvider {
 	return &HFProvider{
 		BaseChatURL: baseURL + "/v1/chat/completions",
 		RateLimit:   16, // self-hosted has no upstream rate limit; just throttle a bit
+		MaxAttempts: 1,
 		client:      &http.Client{Timeout: 300 * time.Second},
 	}
 }
@@ -141,7 +148,11 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 		return "", fmt.Errorf("HF marshal: %w", err)
 	}
 
-	for attempt := range maxRetries {
+	maxAttempts := maxRetries
+	if p.MaxAttempts > 0 {
+		maxAttempts = p.MaxAttempts
+	}
+	for attempt := range maxAttempts {
 		p.throttle()
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.chatURL(), bytes.NewReader(payload))
@@ -158,7 +169,7 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 
 		resp, err := p.client.Do(req)
 		if err != nil {
-			if attempt < maxRetries-1 {
+			if attempt < maxAttempts-1 {
 				backoff := time.Duration(1<<attempt) * time.Second
 				slog.Warn("HF request error", "attempt", attempt+1, "backoff", backoff, "err", err)
 				sleep(ctx, backoff)
@@ -196,23 +207,23 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
-			if attempt < maxRetries-1 {
+			if attempt < maxAttempts-1 {
 				backoff := time.Duration(1<<attempt) * time.Second
 				slog.Warn("HF 429 rate limit", "attempt", attempt+1, "backoff", backoff)
 				sleep(ctx, backoff)
 				continue
 			}
-			return "", &RateLimitError{Msg: fmt.Sprintf("exhausted after %d attempts", maxRetries)}
+			return "", &RateLimitError{Msg: fmt.Sprintf("exhausted after %d attempts", maxAttempts)}
 
 		case 500, 502, 503, 504:
 			resp.Body.Close()
-			if attempt < maxRetries-1 {
+			if attempt < maxAttempts-1 {
 				backoff := time.Duration(1<<attempt) * time.Second
 				slog.Warn("HF server error", "status", resp.StatusCode, "attempt", attempt+1, "backoff", backoff)
 				sleep(ctx, backoff)
 				continue
 			}
-			return "", fmt.Errorf("HF %d server error after %d retries", resp.StatusCode, maxRetries)
+			return "", fmt.Errorf("HF %d server error after %d retries", resp.StatusCode, maxAttempts)
 
 		default:
 			msg := readBody(resp.Body)
