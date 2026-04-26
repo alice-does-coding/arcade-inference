@@ -1,8 +1,11 @@
-// Package feed fetches headlines from curated sources for the simulation.
-// Diet matters: agents react in-character to what they read, so we feed them
-// things that make a vending machine or a lantern actually interesting.
+// Package feed fetches headlines from a hand-picked set of subreddits for the
+// simulation. Diet matters: agents react in-character to what they read, so we
+// feed them things that make a vending machine or a lantern actually interesting.
 //
-// Sources: Reddit (when it cooperates) + Hacker News (always works).
+// Source: Reddit only (text-only posts via is_self filter). Hacker News was
+// removed 2026-04-26 — it pulled in tech/startup news that the things had
+// nothing to react to.
+//
 // Circuit breaker: a source that fails 5 times in a row is skipped for 3
 // refresh cycles (~45 min) before being retried.
 package feed
@@ -181,24 +184,6 @@ func (c *Cache) refreshIfStale() {
 		fresh = append(fresh, items...)
 	}
 
-	// Hacker News — always attempted, circuit breaker applies.
-	hnKey := "hn/top"
-	if until, dead := c.deadUntil[hnKey]; !dead || now.After(until) {
-		items, err := fetchHN()
-		if err != nil {
-			c.failures[hnKey]++
-			if c.failures[hnKey] >= circuitBreakAfter {
-				c.deadUntil[hnKey] = now.Add(circuitCooldown)
-				c.failures[hnKey] = 0
-				log.Printf("[news] hn/top: circuit open after %d failures", circuitBreakAfter)
-			} else {
-				log.Printf("[news] hn/top: %v (failure %d/%d)", err, c.failures[hnKey], circuitBreakAfter)
-			}
-		} else {
-			c.failures[hnKey] = 0
-			fresh = append(fresh, items...)
-		}
-	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -310,119 +295,3 @@ func extractTextSnippet(s string, maxLen int) string {
 	return s
 }
 
-// fetchHN pulls the current top stories from Hacker News via Firebase API.
-// No auth required. Category is inferred from story domain.
-func fetchHN() ([]Headline, error) {
-	const maxStories = 40
-	const fetchTop = 100
-
-	req, err := http.NewRequest(http.MethodGet, "https://hacker-news.firebaseio.com/v0/topstories.json", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("topstories: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("topstories: HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if err != nil {
-		return nil, err
-	}
-	var ids []int
-	if err := json.Unmarshal(body, &ids); err != nil {
-		return nil, err
-	}
-	if len(ids) > fetchTop {
-		ids = ids[:fetchTop]
-	}
-
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var out []Headline
-
-	sem := make(chan struct{}, 10) // 10 concurrent fetches
-	for _, id := range ids {
-		wg.Add(1)
-		go func(storyID int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			h, err := fetchHNStory(storyID)
-			if err != nil || h == nil {
-				return
-			}
-			mu.Lock()
-			out = append(out, *h)
-			mu.Unlock()
-		}(id)
-	}
-	wg.Wait()
-
-	if len(out) > maxStories {
-		rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
-		out = out[:maxStories]
-	}
-	return out, nil
-}
-
-func fetchHNStory(id int) (*Headline, error) {
-	url := fmt.Sprintf("https://hacker-news.firebaseio.com/v0/item/%d.json", id)
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var story struct {
-		Title string `json:"title"`
-		URL   string `json:"url"`
-		Score int    `json:"score"`
-		Type  string `json:"type"`
-		Dead  bool   `json:"dead"`
-		Deleted bool `json:"deleted"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&story); err != nil {
-		return nil, err
-	}
-	if story.Dead || story.Deleted || story.Type != "story" || story.Score < 50 {
-		return nil, nil
-	}
-	title := strings.TrimSpace(story.Title)
-	if title == "" || !isTitleOK(title) {
-		return nil, nil
-	}
-	storyURL := story.URL
-	if storyURL == "" {
-		storyURL = fmt.Sprintf("https://news.ycombinator.com/item?id=%d", id)
-	}
-	return &Headline{
-		Title:    title,
-		Category: hnCategory(storyURL),
-		Source:   "HN",
-		URL:      storyURL,
-	}, nil
-}
-
-// hnCategory infers a rough category from the story URL domain.
-func hnCategory(url string) string {
-	url = strings.ToLower(url)
-	switch {
-	case strings.Contains(url, "github") || strings.Contains(url, "gitlab"):
-		return "Technology"
-	case strings.Contains(url, "arxiv") || strings.Contains(url, "nature.com") || strings.Contains(url, "science"):
-		return "Science"
-	case strings.Contains(url, "nasa") || strings.Contains(url, "space"):
-		return "Space"
-	case strings.Contains(url, "music") || strings.Contains(url, "audio") || strings.Contains(url, "sound"):
-		return "Music"
-	case strings.Contains(url, "art") || strings.Contains(url, "design") || strings.Contains(url, "creative"):
-		return "Art"
-	default:
-		return "Ideas"
-	}
-}
