@@ -9,7 +9,6 @@ package feed
 
 import (
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -55,11 +54,9 @@ var redditSubs = []struct{ name, category string }{
 	{"maliciouscompliance", "Drama"},
 	{"pettyrevenge", "Drama"},
 
-	// Social fabric (just chatter, not advice / not boring)
-	{"CasualConversation", "Conversation"},
-	{"UpliftingNews", "Uplifting"},
-
-	// Curiosity ("huh, look at that")
+	// Curiosity ("huh, look at that") — kept because the title alone often
+	// carries enough context for a thing to react. Filtered to text-only
+	// posts, so image/video posts from these subs don't make it through.
 	{"interestingasfuck", "Curiosity"},
 	{"mildlyinteresting", "Curiosity"},
 }
@@ -214,14 +211,19 @@ func (c *Cache) refreshIfStale() {
 	}
 }
 
-// fetchReddit pulls hot posts from a subreddit via RSS (no auth required).
+// fetchReddit pulls hot text-only posts from a subreddit via Reddit's
+// public JSON endpoint (no auth required).
+//
+// Filters to is_self == true (self/text posts only) — link posts, image
+// posts, video posts, gallery posts all get skipped. Things have nothing
+// to react to from a bare image URL with no caption.
 func fetchReddit(subreddit, category string) ([]Headline, error) {
-	url := fmt.Sprintf("https://www.reddit.com/r/%s/hot.rss?limit=25", subreddit)
+	url := fmt.Sprintf("https://www.reddit.com/r/%s/hot.json?limit=50&raw_json=1", subreddit)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "lurkr-arcade/1.0 (simulation feed reader; contact admin@lurkr.net)")
+	req.Header.Set("User-Agent", "garden-arcade/1.0 (simulation feed reader; contact alice@gardenarcade.ai)")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -232,45 +234,52 @@ func fetchReddit(subreddit, category string) ([]Headline, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
 		return nil, err
 	}
 
-	var feed struct {
-		Entries []struct {
-			Title string `xml:"title"`
-			Link  struct {
-				Href string `xml:"href,attr"`
-			} `xml:"link"`
-			Category struct {
-				Term string `xml:"term,attr"`
-			} `xml:"category"`
-			Content string `xml:"content"`
-			Summary string `xml:"summary"`
-		} `xml:"entry"`
+	var listing struct {
+		Data struct {
+			Children []struct {
+				Data struct {
+					Title     string `json:"title"`
+					Selftext  string `json:"selftext"`
+					IsSelf    bool   `json:"is_self"`
+					IsVideo   bool   `json:"is_video"`
+					Permalink string `json:"permalink"`
+					Stickied  bool   `json:"stickied"`
+				} `json:"data"`
+			} `json:"children"`
+		} `json:"data"`
 	}
-	if err := xml.Unmarshal(body, &feed); err != nil {
-		return nil, fmt.Errorf("rss parse: %w", err)
+	if err := json.Unmarshal(body, &listing); err != nil {
+		return nil, fmt.Errorf("json parse: %w", err)
 	}
 
 	var out []Headline
-	for _, e := range feed.Entries {
-		title := strings.TrimSpace(e.Title)
+	for _, c := range listing.Data.Children {
+		p := c.Data
+		// Text-only posts. Skip link / image / video / gallery / stickied
+		// announcements. Some "self" posts have empty selftext (just a
+		// title) — those are still allowed because the title itself often
+		// carries the whole story (especially in AITA/tifu titles).
+		if !p.IsSelf || p.IsVideo || p.Stickied {
+			continue
+		}
+		title := strings.TrimSpace(p.Title)
 		if title == "" || !isTitleOK(title) {
 			continue
 		}
-		postURL := e.Link.Href
-		if postURL == "" {
-			postURL = fmt.Sprintf("https://www.reddit.com/r/%s", subreddit)
+		// Block on selftext too — heavy stuff sometimes hides behind a
+		// neutral title.
+		if p.Selftext != "" && !isTitleOK(p.Selftext) {
+			continue
 		}
-		raw := e.Summary
-		if raw == "" {
-			raw = e.Content
-		}
+		postURL := "https://www.reddit.com" + p.Permalink
 		out = append(out, Headline{
 			Title:    title,
-			Summary:  extractTextSnippet(raw, 180),
+			Summary:  extractTextSnippet(p.Selftext, 180),
 			Category: category,
 			Source:   "r/" + subreddit,
 			URL:      postURL,
