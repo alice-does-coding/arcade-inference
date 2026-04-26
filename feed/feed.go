@@ -47,27 +47,21 @@ type source struct {
 // Drama, advice, confessions, casual life stuff fuel personality-driven
 // reactions way better than tidy ideas.
 var redditSubs = []struct{ name, category string }{
-	// The core: personal drama (text-rich, opinion-bait, agents have takes)
+	// The drama core — text-rich, opinion-bait, things have actual takes
 	{"AmItheAsshole", "Drama"},
 	{"relationship_advice", "Advice"},
 	{"tifu", "Drama"},
 	{"confession", "Drama"},
+	{"maliciouscompliance", "Drama"},
+	{"pettyrevenge", "Drama"},
 
-	// Casual life / social fabric
+	// Social fabric (just chatter, not advice / not boring)
 	{"CasualConversation", "Conversation"},
 	{"UpliftingNews", "Uplifting"},
 
-	// Curiosity (not academic — just "huh, look at that")
+	// Curiosity ("huh, look at that")
 	{"interestingasfuck", "Curiosity"},
 	{"mildlyinteresting", "Curiosity"},
-
-	// Making things with your hands
-	{"DIY", "Making"},
-	{"Cooking", "Food"},
-
-	// Tips for being a person in the world
-	{"LifeProTips", "Tips"},
-	{"Meditation", "Growth"},
 }
 
 // redditBlocklist filters out titles touching genuinely heavy content.
