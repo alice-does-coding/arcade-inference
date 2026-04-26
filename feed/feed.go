@@ -54,11 +54,14 @@ var redditSubs = []struct{ name, category string }{
 	{"maliciouscompliance", "Drama"},
 	{"pettyrevenge", "Drama"},
 
-	// Curiosity ("huh, look at that") — kept because the title alone often
-	// carries enough context for a thing to react. Filtered to text-only
-	// posts, so image/video posts from these subs don't make it through.
-	{"interestingasfuck", "Curiosity"},
-	{"mildlyinteresting", "Curiosity"},
+	// Heat — devotion, yearning, splitting, family rupture. The emotional
+	// weather things should react to. Replaces the previous curiosity subs
+	// (interestingasfuck / mildlyinteresting) which were observer-mode,
+	// low-temperature.
+	{"UnsentLetters", "Yearning"},
+	{"offmychest", "Confession"},
+	{"BestofRedditorUpdates", "Saga"},
+	{"JUSTNOMIL", "Family"},
 }
 
 // redditBlocklist filters out titles touching genuinely heavy content.
