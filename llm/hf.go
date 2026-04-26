@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -77,6 +78,28 @@ func (p *HFProvider) chatURL() string {
 	return hfChatURL
 }
 
+// injectNoThink suppresses Qwen3's default thinking mode by ensuring the
+// /no_think directive appears in a system message. Qwen3-family models
+// recognise this as a soft switch and skip the <think>...</think> block,
+// which is critical for chat latency and often pure noise in tiny models.
+//
+// Only applied when calling a self-hosted endpoint (BaseChatURL set) — HF
+// router calls go to whichever model is selected and may not be Qwen.
+func injectNoThink(messages []Message) []Message {
+	out := make([]Message, len(messages))
+	copy(out, messages)
+	for i, m := range out {
+		if m.Role == "system" {
+			if !strings.Contains(m.Content, "/no_think") {
+				out[i].Content = "/no_think " + m.Content
+			}
+			return out
+		}
+	}
+	// No system message — add one.
+	return append([]Message{{Role: "system", Content: "/no_think"}}, out...)
+}
+
 // Reset clears the auth latch. Call at tick start.
 func (p *HFProvider) Reset() {
 	p.mu.Lock()
@@ -98,6 +121,10 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 	model := opts.Model
 	if model == "" {
 		model = p.DefaultModel
+	}
+	// Self-hosted callers get /no_think injected by default — see injectNoThink.
+	if p.BaseChatURL != "" {
+		messages = injectNoThink(messages)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"model":       model,
