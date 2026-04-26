@@ -19,15 +19,21 @@ const (
 	maxRetries  = 6
 )
 
-// HFProvider calls the HuggingFace Inference API (OpenAI-compatible endpoint).
+// HFProvider calls an OpenAI-compatible chat-completions endpoint.
 //
-// Rate limiting: a proactive token-bucket gate serialises concurrent callers
-// so we stay within HF Pro limits (~8 req/s default).
+// Despite the historic name, this client is provider-agnostic: BaseChatURL
+// can point at HuggingFace's router OR at a self-hosted llama.cpp / vLLM
+// server (e.g. http://garden-arcade-text.flycast:8080). When BaseChatURL
+// is empty, defaults to HF for backward compatibility.
+//
+// Rate limiting: a proactive token-bucket gate serialises concurrent callers.
+// Default 8 req/s; override per-host as appropriate.
 //
 // Auth latch: on first 401 this tick, all subsequent callers bail immediately
 // without making HTTP calls. Cleared by Reset().
 type HFProvider struct {
 	APIKey       string
+	BaseChatURL  string  // OAI-compatible /v1/chat/completions endpoint; empty = HF router
 	DefaultModel string  // used when ChatOptions.Model is empty
 	RateLimit    float64 // requests per second; default 8
 
@@ -46,6 +52,29 @@ func NewHFProvider(apiKey string, rateLimit float64) *HFProvider {
 		RateLimit: rateLimit,
 		client:    &http.Client{Timeout: 120 * time.Second},
 	}
+}
+
+// NewSelfHostedProvider creates a provider for a self-hosted OpenAI-compatible
+// inference server (e.g. llama.cpp's /v1/chat/completions). No API key required;
+// auth is the network boundary (flycast / VPC / Tailscale).
+//
+// baseURL should point at the server root (without /v1/...) — e.g.
+// "http://garden-arcade-text.flycast:8080".
+func NewSelfHostedProvider(baseURL string) *HFProvider {
+	return &HFProvider{
+		BaseChatURL: baseURL + "/v1/chat/completions",
+		RateLimit:   16, // self-hosted has no upstream rate limit; just throttle a bit
+		client:      &http.Client{Timeout: 120 * time.Second},
+	}
+}
+
+// chatURL returns the configured chat endpoint, defaulting to HF's router
+// when BaseChatURL is empty.
+func (p *HFProvider) chatURL() string {
+	if p.BaseChatURL != "" {
+		return p.BaseChatURL
+	}
+	return hfChatURL
 }
 
 // Reset clears the auth latch. Call at tick start.
@@ -83,11 +112,16 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 	for attempt := range maxRetries {
 		p.throttle()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, hfChatURL, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.chatURL(), bytes.NewReader(payload))
 		if err != nil {
 			return "", err
 		}
-		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+		// Self-hosted endpoints don't need auth (network boundary IS the auth).
+		// Only set Authorization when we have a key — avoids sending "Bearer " to
+		// llama.cpp which logs noise for empty-token requests.
+		if p.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+p.APIKey)
+		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := p.client.Do(req)
