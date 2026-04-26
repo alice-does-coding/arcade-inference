@@ -41,94 +41,58 @@ type source struct {
 }
 
 // redditSubs is the curated list of subreddits.
-// Selected for text-rich posts that agents can engage with meaningfully.
-// Image-only subreddits (aww, EarthPorn, photography, oddlysatisfying) are
-// intentionally excluded — their titles are image captions with no text context,
-// which produces non-sequiturs when agents try to react.
+// Selected for text-rich personal-drama posts that things can have actual
+// reactions to. The previous list (philosophy, neuroscience, MachineLearning,
+// etc.) was too academic — things are not rocket scientists; they're things.
+// Drama, advice, confessions, casual life stuff fuel personality-driven
+// reactions way better than tidy ideas.
 var redditSubs = []struct{ name, category string }{
-	// Text-rich discussion and ideas
-	{"UpliftingNews", "Uplifting"},
+	// The core: personal drama (text-rich, opinion-bait, agents have takes)
+	{"AmItheAsshole", "Drama"},
+	{"relationship_advice", "Advice"},
+	{"tifu", "Drama"},
+	{"confession", "Drama"},
+
+	// Casual life / social fabric
 	{"CasualConversation", "Conversation"},
-	{"todayilearned", "Trivia"},
-	{"Showerthoughts", "Ideas"},
-	{"NoStupidQuestions", "Ideas"},
-	{"explainlikeimfive", "Ideas"},
-	{"Futurology", "Future"},
-	{"philosophy", "Ideas"},
+	{"UpliftingNews", "Uplifting"},
 
-	// Science and technology
-	{"space", "Space"},
-	{"nasa", "Space"},
-	{"physics", "Science"},
-	{"chemistry", "Science"},
-	{"mathematics", "Science"},
-	{"MachineLearning", "Technology"},
-	{"singularity", "Technology"},
-	{"neuroscience", "Science"},
-	{"biology", "Science"},
-
-	// Creative and writing
-	{"worldbuilding", "Writing"},
-	{"WriteReadPublish", "Writing"},
-	{"scifi", "Books"},
-	{"Fantasy", "Books"},
-	{"booksuggestions", "Books"},
-	{"TrueFilm", "Film"},
-	{"WeAreTheMusicMakers", "Music"},
-
-	// Gaming (text discussions, not screenshots)
-	{"truegaming", "Gaming"},
-	{"patientgamers", "Gaming"},
-	{"indiegaming", "Gaming"},
-
-	// Growth and reflection
-	{"GetMotivated", "Motivation"},
-	{"DecidingToBeBetter", "Growth"},
-	{"NonZeroDay", "Growth"},
-	{"LifeProTips", "Tips"},
-	{"Meditation", "Growth"},
-
-	// Food and making (recipe posts have real text)
-	{"Cooking", "Food"},
-	{"DIY", "Making"},
-
-	// Curiosity — these often have text context even for image posts
+	// Curiosity (not academic — just "huh, look at that")
 	{"interestingasfuck", "Curiosity"},
 	{"mildlyinteresting", "Curiosity"},
+
+	// Making things with your hands
+	{"DIY", "Making"},
+	{"Cooking", "Food"},
+
+	// Tips for being a person in the world
+	{"LifeProTips", "Tips"},
+	{"Meditation", "Growth"},
 }
 
+// redditBlocklist filters out titles touching genuinely heavy content.
+// Tightened 2026-04-26: previous list also blocked "abuse", "assault",
+// "harassment", "depression", "alcohol", etc. — bread-and-butter vocabulary
+// of AITA / relationship_advice. With the drama subs added, blocking those
+// would filter out half the feed. Hard blocks only now (sexual violence,
+// child harm, mass violence, self-harm, hard-drug death, politics).
 var redditBlocklist = []string{
-	"died", "death", "dead", "killed", "murder", "suicide",
-	"war", "bombing", "missile", "attack", "shooting", "stabbing",
-	"crash", "disaster", "tragedy", "hurricane", "earthquake",
-	"hostage", "kidnap", "missing",
-	"cancer", "tumor", "tumour", "disease", "overdose",
-	"symptom", "symptoms", "diagnosis", "diagnosed",
-	"disorder", "syndrome", "autoimmune", "inflammation", "inflammatory",
-	"hospital", "hospitalized", "hospitalised", "surgery", "surgical",
-	"prescription", "medication", "antibiotic", "vaccine", "vaccination",
-	"chronic", "terminal", "remission", "relapse", "transplant",
-	"outbreak", "epidemic", "pandemic", "infection", "infected",
-	"illness", "ill ", "sick ", "sickness", "injury", "injuries",
-	"wound", "bleeding", "fracture", "paralys", "disabled",
-	"mental health", "depression", "anxiety disorder", "bipolar",
-	"dementia", "alzheimer", "autism spectrum",
-	"withdrawal", "addiction", "overdosed",
-	"skin condition", "rash", "eczema", "psoriasis",
-	"therapy", "therapist", "clinical trial", "placebo",
-	"immune", "autoimmun", "stem cell", "gene therapy",
-	"arrested", "indicted", "sentenced", "convicted", "charged",
-	"scandal", "lawsuit", "abuse", "assault", "harassment",
-	"trump", "biden", "congress", "senate", "republican", "democrat",
-	"election", "ballot", "vote", "politician",
-	"racist", "racism", "riot", "protest", "refugee",
-	"gambling", "casino", "poker", "betting", "wager", "jackpot",
-	"slot machine", "lottery", "odds", "bookie", "sportsbook",
-	"alcohol", "alcoholic", "drunk", "drinking problem", "rehab",
-	"cocaine", "heroin", "fentanyl", "opioid", "meth", "amphetamine",
-	"marijuana", "cannabis", "weed", "stoned", "high on",
-	"drug", "narcotic", "sobriety", "sober", "relapse",
-	"layoff", "laid off", "fired", "bankruptcy",
+	// Self-harm + suicide
+	"suicide", "suicidal", "kill myself", "killed myself", "took my life", "took her life", "took his life",
+	// Sexual violence
+	"rape", "raped", "sexual assault", "molest", "molested", "groomed", "grooming",
+	// Child harm
+	"child abuse", "child porn", "csam",
+	// Mass / weapon violence
+	"mass shooting", "school shooting", "terrorist", "terrorism", "bombing", "missile attack",
+	// Hard-drug death
+	"fentanyl", "overdosed", "heroin overdose",
+	// Politics — drama subs do mention these but the threads turn nasty fast
+	"trump", "biden", "harris", "vance",
+	"congress", "senate", "republican", "democrat",
+	"election", "ballot", "politician",
+	// Scams / predatory finance
+	"scam", "scammer",
 }
 
 var blockRe *regexp.Regexp
