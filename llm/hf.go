@@ -154,12 +154,26 @@ func (p *HFProvider) Chat(ctx context.Context, messages []Message, opts ChatOpti
 	if p.BaseChatURL != "" {
 		messages = injectNoThink(messages)
 	}
-	payload, err := json.Marshal(map[string]any{
+	// Glitch-aesthetic sampling defaults for self-hosted (Garden Arcade is
+	// glitch art as much as it is generative — small weird models that are
+	// obviously themselves are the goal). High temperature + token-diversity
+	// penalties dent the small-model "favorite cliché phrasings" problem
+	// without going incoherent. Doesn't suppress favorites across calls
+	// (those penalties are per-completion only) — that's a model-size limit.
+	payloadFields := map[string]any{
 		"model":       model,
 		"messages":    messages,
 		"max_tokens":  opts.MaxTokens,
 		"temperature": opts.Temperature,
-	})
+	}
+	if p.BaseChatURL != "" {
+		payloadFields["top_p"] = 0.95              // narrow truncation, lets weirdness through
+		payloadFields["top_k"] = 0                 // unlimited vocab
+		payloadFields["repeat_penalty"] = 1.25     // dampens within-call repetition
+		payloadFields["frequency_penalty"] = 0.4   // pushes off favorite phrasings mid-response
+		payloadFields["presence_penalty"] = 0.3    // rewards picking unused tokens
+	}
+	payload, err := json.Marshal(payloadFields)
 	if err != nil {
 		return "", fmt.Errorf("HF marshal: %w", err)
 	}
